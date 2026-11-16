@@ -14,6 +14,9 @@ menu:  RightShift (desktop) / H button then the floating PB button (mobile)
   animating bar and releases where it meets the green segment — no reliance on
   object names or a single colour. Also reads perfect text, power bars, ball
   attributes and a learned release lead.
+- **Hold Time** slider (50-2000 ms) with a new `TIMED` release mode: hold for an
+  exact duration and release, no meter reading required. Tune it against the
+  green window, then optionally add `Green Bias` on top of detected greens.
 - **Fallback release** when no meter signal exists, plus a per-shot timeout, so
   the shot never stays held forever.
 - **Ball detection** handles BasePart, Model and Tool balls, owner attributes and
@@ -27,6 +30,7 @@ menu:  RightShift (desktop) / H button then the floating PB button (mobile)
 ```text
 Capture Log      ON  -> every shot writes / prints one line
 Dump meter UI    DUMP -> writes the live PlayerGui tree around the meter
+Hold Time        ---  -> timed hold, used when Release Mode = TIMED
 ```
 
 Output:
@@ -45,6 +49,8 @@ Shot line format:
 
 `dur` is press-to-release in ms; `reason` is `signal`, `fallback`, `timeout`,
 `detach` or `test-*`; `dynhit` is the exact fill/zone geometry that triggered.
+In `TIMED` mode `dur` should read back the Hold Time value, so it doubles as a
+sanity check that the configured hold is what actually went out.
 A dump of `ollie_pb_ui.txt` taken during a shot identifies the real meter
 widgets (names, classes, positions, sizes, colours).
 

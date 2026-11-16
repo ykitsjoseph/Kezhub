@@ -22,7 +22,8 @@ local Config = {
   Tab            = 1,
   AutoShoot        = true,
   AutoShootVerbose = false,
-  ReleaseMode      = "AUTO",   -- AUTO / GREEN / PERFECT / POWER / ADAPTIVE
+  ReleaseMode      = "AUTO",   -- AUTO / GREEN / PERFECT / POWER / ADAPTIVE / TIMED
+  HoldMs           = 600,      -- TIMED mode: press-to-release hold, ms
   GreenBiasMs      = 0,        -- negative = earlier, positive = later
   HumanizeMs       = 6,        -- random release jitter ceiling, ms
   LatencyComp      = 40,       -- ms subtracted from release lead
@@ -850,6 +851,10 @@ local function shotReady()
   local attrSignal = attributeActive()
   local powerSignal = powerActive()
   local predicted = predictedReady(now)
+  if mode == "TIMED" then
+    return State.holding
+       and math.floor((now - State.shotStart) * 1000 + 0.5) >= Config.HoldMs
+  end
   if mode == "GREEN" then
     if dyn then return true end
     if animated then return false end
@@ -1399,7 +1404,12 @@ local function buildUI()
     testShot()
   end)
   cycleRow(p1, "Release Mode", "ReleaseMode",
-    { "AUTO", "GREEN", "PERFECT", "POWER", "ADAPTIVE" })
+    { "AUTO", "GREEN", "PERFECT", "POWER", "ADAPTIVE", "TIMED" }, function(v)
+      if v == "TIMED" then notify("timed hold: " .. Config.HoldMs .. " ms", 1.8) end
+    end)
+  sliderRow(p1, "Hold Time", "HoldMs", 50, 2000, function(v)
+    return string.format("%.0f ms", v)
+  end)
   sliderRow(p1, "Green Bias", "GreenBiasMs", -100, 100, function(v)
     return string.format("%+.0f ms", v)
   end)
@@ -1891,9 +1901,11 @@ loadConfig = function()
   end
   Config.FallbackMs = clamp(Config.FallbackMs, 200, 2000)
   Config.PossessionRange = clamp(Config.PossessionRange, 2, 20)
+  Config.HoldMs = clamp(Config.HoldMs, 50, 2000)
   local fire = { AUTO = true, HOLD = true, TAP = true }
   if not fire[Config.FireMode] then Config.FireMode = "AUTO" end
-  local modes = { AUTO = true, GREEN = true, PERFECT = true, POWER = true, ADAPTIVE = true }
+  local modes = { AUTO = true, GREEN = true, PERFECT = true, POWER = true,
+                  ADAPTIVE = true, TIMED = true }
   if not modes[Config.ReleaseMode] then Config.ReleaseMode = "AUTO" end
   applyTheme(Config.Accent)
   return true
@@ -1983,7 +1995,9 @@ local function driverTick(dt)
         beginShot()
       end
     else
-      if not hasBall() and not State.testing and (now - State.shotStart) > 0.12 then
+      local timed = Config.ReleaseMode == "TIMED"
+      if not hasBall() and not State.testing and not timed
+       and (now - State.shotStart) > 0.12 then
         releaseShot("detach")
       end
       local okReady, ready = pcall(shotReady)
@@ -2007,11 +2021,13 @@ local function driverTick(dt)
         State.greenStart = nil
       end
       local held = now - State.shotStart
-      if State.holding and Config.FallbackRelease and not State.signalSeen
-       and held > (Config.FallbackMs / 1000) then
+      if State.holding and not timed and Config.FallbackRelease
+       and not State.signalSeen and held > (Config.FallbackMs / 1000) then
         releaseShot("fallback")
       end
-      if State.holding and held > Config.ShotTimeout then
+      local limit = Config.ShotTimeout
+      if timed then limit = math.max(limit, Config.HoldMs / 1000 + 0.25) end
+      if State.holding and held > limit then
         releaseShot("timeout")
       end
     end
@@ -2102,7 +2118,7 @@ local function driverTick(dt)
       if not Config.AutoShoot then
         tag = "IDLE"
       elseif State.holding then
-        tag = "HOLD"
+        tag = (Config.ReleaseMode == "TIMED") and "HOLD-T" or "HOLD"
       elseif hasBall() then
         tag = "ARMED"
       else
