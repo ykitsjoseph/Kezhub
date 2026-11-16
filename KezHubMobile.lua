@@ -51,6 +51,7 @@ local Config = {
   FallbackRelease  = true,
   FallbackMs       = 650,
   PossessionRange  = 6,
+  Capture          = false,
   Schema           = 3,
 }
 local THEMES = {
@@ -690,6 +691,7 @@ local function dynReset()
   Dyn.motion = 0
   Dyn.scans = 0
   Dyn.motionShot = false
+  Dyn.hit = nil
 end
 local function dynPoll()
   if not Config.DynamicMeter then return false end
@@ -748,6 +750,9 @@ local function dynPoll()
       local crossY = math.abs(m.dy) > 0.6 and inY and spanX and math.abs(m.dx) < 8
       if crossX or crossY then
         ready = true
+        Dyn.hit = string.format("%s fill=(%.0f,%.0f %.0fx%.0f) zone=(%.0f,%.0f %.0fx%.0f)",
+          crossX and "x" or "y", m.p.X, m.p.Y, m.s.X, m.s.Y,
+          g.p.X, g.p.Y, g.s.X, g.s.Y)
         break
       end
     end
@@ -767,6 +772,73 @@ local function dynamicReady()
 end
 local function dynMeterActive()
   return Config.DynamicMeter and (os.clock() - Dyn.motion) < 0.35
+end
+
+-- ============================== CAPTURE ==================================
+-- Opt-in telemetry for tuning. Each shot appends one line; the live meter UI
+-- can be dumped as a tree so the real layout can be read from a paste.
+local Capture = {
+  path = "ollie_pb_capture.txt",
+  uiPath = "ollie_pb_ui.txt",
+  lines = {},
+  shots = 0,
+}
+local function capWrite(text, path)
+  if typeof(writefile) == "function" then
+    local ok = pcall(function() writefile(path, text) end)
+    if ok then return true end
+  end
+  return false
+end
+local function capColor(c)
+  if not c then return "-" end
+  return string.format("%d,%d,%d", math.floor(c.R * 255 + 0.5),
+    math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
+end
+local function capLog(line)
+  Capture.shots = Capture.shots + 1
+  local stamp = string.format("%d ", Capture.shots)
+  table.insert(Capture.lines, stamp .. line)
+  while #Capture.lines > 80 do table.remove(Capture.lines, 1) end
+  local wrote = capWrite(table.concat(Capture.lines, "\n") .. "\n", Capture.path)
+  pcall(function() print("[PB] " .. stamp .. line) end)
+  return wrote
+end
+local function capUI()
+  local pg = LP:FindFirstChild("PlayerGui")
+  if not pg then return false, 0 end
+  local out = { "player=" .. LP.Name .. "  " .. os.date("%Y-%m-%d %H:%M:%S") }
+  local function walk(o, depth)
+    if #out > 400 or depth > 7 then return end
+    for _, c in ipairs(o:GetChildren()) do
+      if not isOwnGui(c) then
+        local line = string.rep("  ", depth) .. c.ClassName .. " '" .. c.Name .. "'"
+        local okGui, isGui = pcall(function() return c:IsA("GuiObject") end)
+        if okGui and isGui then
+          local p, sz = c.AbsolutePosition, c.AbsoluteSize
+          line = line .. string.format(" @%.0f,%.0f %.0fx%.0f", p.X, p.Y, sz.X, sz.Y)
+          local col = nil
+          if c:IsA("Frame") then col = c.BackgroundColor3
+          elseif c:IsA("ImageLabel") then col = c.ImageColor3
+          elseif c:IsA("TextLabel") or c:IsA("TextButton") then
+            col = c.TextColor3
+            if c.Text ~= "" then
+              line = line .. " text='" .. string.sub(c.Text, 1, 24) .. "'"
+            end
+          end
+          if col then line = line .. " rgb(" .. capColor(col) .. ")" end
+          line = line .. (c.Visible and " vis" or " HIDDEN")
+        end
+        table.insert(out, line)
+        walk(c, depth + 1)
+      end
+    end
+  end
+  walk(pg, 0)
+  local text = table.concat(out, "\n") .. "\n"
+  local wrote = capWrite(text, Capture.uiPath)
+  pcall(function() print(text) end)
+  return wrote, #out
 end
 local function shotReady()
   refreshMeter()
@@ -810,6 +882,22 @@ local function beginShot()
   State.greenPreexisting = greenActive()
   Meter.powerValue = false
   Meter.lastRatio = setmetatable({}, { __mode = "k" })
+  State.cap = {
+    t0 = State.shotStart,
+    bridge = Bridge.name,
+    mode = Config.ReleaseMode,
+    fire = Config.FireMode,
+    ball = "none",
+    d = -1,
+  }
+  do
+    local b = findBall()
+    local bp = ballPosition(b)
+    local char = LP.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if b then State.cap.ball = string.sub(b.Name, 1, 20) end
+    if bp and root then State.cap.d = (bp - root.Position).Magnitude end
+  end
   mouseDown()
 end
 local function releaseShot(reason)
@@ -828,6 +916,17 @@ local function releaseShot(reason)
   mouseUp()
   flash()
   State.lastRelease = reason
+  if Config.Capture and State.cap then
+    local cap = State.cap
+    local dur = os.clock() - cap.t0
+    local wrote = capLog(string.format(
+      "dur=%dms reason=%s mode=%s fire=%s bridge=%s ball=%s d=%.1fm green=%d text=%d dynmove=%s dynhit=%s",
+      math.floor(dur * 1000 + 0.5), tostring(reason), tostring(cap.mode),
+      tostring(cap.fire), tostring(cap.bridge), cap.ball, cap.d,
+      #Meter.greens, #Meter.texts, Dyn.motionShot and "yes" or "no", Dyn.hit or "-"))
+    if not wrote then notify("capture: no file api, console only", 2.2) end
+  end
+  State.cap = nil
   if Config.AutoShootVerbose then notify("release: " .. tostring(reason), 0.8) end
 end
 local function testShot()
@@ -1342,6 +1441,17 @@ local function buildUI()
     notify("shot samples cleared", 1.2)
   end)
   toggleRow(p1, "Verbose Release", "AutoShootVerbose")
+  toggleRow(p1, "Capture Log", "Capture", function(on)
+    if on then notify("capture on // shoot, then read " .. Capture.path, 2.8) end
+  end)
+  actionRow(p1, "Dump meter UI", "DUMP", function()
+    local wrote, n = capUI()
+    if wrote then
+      notify("wrote " .. Capture.uiPath .. " (" .. n .. " lines)", 2.2)
+    else
+      notify("dump printed to console (" .. n .. " lines)", 2.2)
+    end
+  end)
   local stRow = row(p1, 38)
   make("TextLabel", {
     Size = UDim2.new(1, -140, 0, 14),
