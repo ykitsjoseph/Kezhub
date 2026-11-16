@@ -1,63 +1,76 @@
 # Kezhub
 
-Practical Basketball executor suite — `KezHubMobile.lua`.
+Blade Ball executor suite — `KezHubMobile.lua`.
 
 ```text
 load:  paste KezHubMobile.lua into any executor (Wave, Solara, Delta, Synapse-class)
-menu:  RightShift (desktop) / H button then the floating PB button (mobile)
+menu:  RightShift (desktop) / H button then the floating BB button (mobile)
 ```
 
-## v3
+## Auto Parry
 
-- **Auto Shoot** fires on its own: probes `mouse1press` / `mouse1release`, then
-  `VirtualUser` hold, then a click tap. Per-frame dynamic meter read finds any
-  animating bar and releases where it meets the green segment — no reliance on
-  object names or a single colour. Also reads perfect text, power bars, ball
-  attributes and a learned release lead.
-- **Hold Time** slider (50-2000 ms) with a new `TIMED` release mode: hold for an
-  exact duration and release, no meter reading required. Tune it against the
-  green window, then optionally add `Green Bias` on top of detected greens.
-- **Fallback release** when no meter signal exists, plus a per-shot timeout, so
-  the shot never stays held forever.
-- **Ball detection** handles BasePart, Model and Tool balls, owner attributes and
-  a configurable possession range.
-- **Mobile**: auto-fit UI scale, touch drag and sliders, on-screen hide/restore.
-- **UI**: sharp-cornered tabbed rectangle window, theme swatches, live signal
-  readout (`SIGNAL` + ball / distance / green / text / dynamic-meter line).
+- **Ball tracking** finds the live ball by name (`ball`, `bladeball`, `orb`, any
+  name containing `ball`, or a `Model` with a ball-like `Handle`), skipping your
+  own character. Velocity is sampled per-instance, so closing speed and time to
+  impact come from real motion rather than distance alone.
+- **Prediction** fires when the ball is inside `Parry Range` *and* its ETA is
+  under `Parry Lead` (default 120 ms before impact). Turn prediction off to
+  parry on distance only. `Incoming Only` ignores balls that are moving away,
+  with a forced parry under 5 studs as a safety net.
+- **Parry Method** decides how the parry is sent:
+  - `AUTO` — remote if one is found, then the parry key, then a click
+  - `REMOTE` — fires the discovered parry `RemoteEvent` / `RemoteFunction`
+  - `KEY` — sends the parry key (default `Q`)
+  - `CLICK` — clicks the viewport centre
+- **Test parry** button proves the input bridge works before you trust it, and
+  the status row shows `SIGNAL // method // count` plus a live
+  `distance / eta / speed` line.
 
-## Tuning data (SHOT page)
+## Combat / Move / Visual
+
+- **Combat** — auto aim (with strength), auto curve toward the ball's lead
+  point, auto dodge out of the ball path, auto ability key on a cooldown,
+  auto clash in close range, and auto return after a configurable delay.
+- **Move** — walk speed and jump power sliders, infinite jump.
+- **Visual** — ball ESP highlight plus a distance tag, parry flash, watermark,
+  FPS and ping counters.
+- **Theme** — six accent swatches, UI scale, window transparency, rebindable
+  menu key, config save / load / factory reset, kill switch.
+
+The window keeps the original sharp-cornered tabbed rectangle layout, mobile
+auto-fit scale, touch drag, and hide/restore button.
+
+## Debugging (VISUAL page)
 
 ```text
-Capture Log      ON  -> every shot writes / prints one line
-Dump meter UI    DUMP -> writes the live PlayerGui tree around the meter
-Hold Time        ---  -> timed hold, used when Release Mode = TIMED
+Capture Log  ON   -> every parry writes one line (file + console)
+Dump scan    DUMP -> writes remotes, ball candidates and GUI hints
 ```
 
 Output:
 
 ```text
-ollie_pb_capture.txt   ollie_pb_ui.txt     (executor workspace folder)
-[PB] ...                                  (executor console, same lines)
+ollie_bb_capture.txt   parry log
+ollie_bb_scan.txt      remotes / balls / gui dump
+ollie_bb.json          saved config
+[BB] ...               same lines in the executor console
 ```
 
-Shot line format:
+Parry line format:
 
 ```text
-#1 dur=90ms reason=signal mode=AUTO fire=AUTO bridge=virtualuser ball=Basketball
-   d=1.4m green=1 text=0 dynmove=yes dynhit=x fill=(100,500 210x18) zone=(280,500 30x18)
+#1 parry reason=eta method=remote eta=109ms dist=10.4m speed=100 ball=Ball
 ```
 
-`dur` is press-to-release in ms; `reason` is `signal`, `fallback`, `timeout`,
-`detach` or `test-*`; `dynhit` is the exact fill/zone geometry that triggered.
-In `TIMED` mode `dur` should read back the Hold Time value, so it doubles as a
-sanity check that the configured hold is what actually went out.
-A dump of `ollie_pb_ui.txt` taken during a shot identifies the real meter
-widgets (names, classes, positions, sizes, colours).
+`reason` is `eta`, `spam`, `clash`, `return` or `test`; `method` is `remote`,
+`key`, `click`, `vu` or `none`. If `method=none`, no input bridge is available —
+check `ollie_bb_scan.txt` for the real remote name and use `Find remote`.
 
 ## Notes
 
-Syntax-checked with `luac 5.4` and driven against a Roblox API stub with
-synthetic horizontal, vertical and delayed-green shot meters, both hold and tap
-input paths, and the capture/dump writers. In-game behaviour on the live build
-is still unverified — use `TEST SHOT` and read the status line if a meter is not
-being picked up.
+Syntax-checked with `luac 5.4` and driven against a Roblox API stub with a
+synthetic incoming ball at 100 studs/s. Verified in the harness: parry fires at
+the 120 ms lead over the remote path, the `KEY` path fires with the remote absent,
+capture and scan files are written, and all page buttons exist. Live behaviour
+in the real game is unverified — remote names and the parry key are heuristics,
+so use `Test parry` and `Dump scan` first if nothing registers.
